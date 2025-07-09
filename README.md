@@ -14,3 +14,11 @@ cd ~/ros2_ws
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
+
+ros2 launch rtabmap_ros rtabmap.launch.py \
+      rgb:=/camera/color/image_raw \
+      depth_topic:=/camera/depth/image_raw \
+      camera_info_topic:=/camera/color/camera_info \
+      frame_id:=camera_link \
+      subscribe_rgbd:=false \
+      approx_sync:=true \
