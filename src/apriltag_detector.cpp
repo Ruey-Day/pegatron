@@ -5,21 +5,21 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
-#include "geometry_msgs/msg/twist.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 
 #include "tf2/LinearMath/Matrix3x3.h"      // <-- Added for rotation matrix conversion
 #include "tf2/LinearMath/Quaternion.h"     // <-- Added for quaternion operations
+#include "geometry_msgs/msg/pose.hpp"
 
 #include "cv_bridge/cv_bridge.h"
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
+#include <tf2/LinearMath/Transform.h>
 
 #include "apriltag/apriltag.h"
 #include "apriltag/tagStandard41h12.h"
 #include "apriltag/common/matd.h"
-
 
 class AprilTagDetector : public rclcpp::Node
 {
@@ -39,15 +39,15 @@ public:
         td->refine_edges = this->declare_parameter("refine_edges", 1);
 
         // Tag size in meters
-        tag_size = this->declare_parameter("tag_size", 0.0922);
+        tag_size = this->declare_parameter("tag_size", 0.0556);
 
         // Create a message filter to synchronize image and camera_info
         image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-            "/image_raw", 10, std::bind(&AprilTagDetector::imageCallback, this, std::placeholders::_1));
+            "camera/camera/color/image_raw", 10, std::bind(&AprilTagDetector::imageCallback, this, std::placeholders::_1));
         
         camera_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-            "/camera_info", 10, std::bind(&AprilTagDetector::cameraInfoCallback, this, std::placeholders::_1));
-
+            "/camera/camera/color/camera_info", 10, std::bind(&AprilTagDetector::cameraInfoCallback, this, std::placeholders::_1));
+        
         // Create publishers
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
@@ -68,7 +68,6 @@ private:
             RCLCPP_INFO(this->get_logger(), "Waiting for camera info...");
             return;
         }
-
         try {   
             RCLCPP_INFO(this->get_logger(), "Processing image frame");
             cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
@@ -84,15 +83,16 @@ private:
             };
             
             // Detect AprilTags
+            // std::unordered_set<int> detected_ids;
             zarray_t *detections = apriltag_detector_detect(td, &im);
             RCLCPP_INFO(this->get_logger(), "Number of detections: %d", zarray_size(detections));
 
             // Create camera matrix from camera info
-            cv::Mat cameraMat = (cv::Mat_<double>(3, 3) << 
-                    610.46296007, 0.0, 321.0857477,
-                    0.0, 609.56569972, 256.30448812,
-                    0.0, 0.0, 1.0);
-            cv::Mat distCoeffs = (cv::Mat_<double>(1,5) << 0.04497951,  0.58119324,  0.00343644, -0.00335564, -2.43301257);
+            cv::Mat cameraMat = (cv::Mat_<double>(3, 3) <<
+                camera_info_K[0], 0.0, camera_info_K[2],
+                0.0, camera_info_K[4], camera_info_K[5],
+                0.0, 0.0, 1.0);
+            cv::Mat distCoeffs = cv::Mat(camera_info_D);
 
             // Define 3D model points for a square tag
             // These are the coordinates of the tag corners in the tag's local coordinate system
@@ -108,6 +108,7 @@ private:
             for (int i = 0; i < zarray_size(detections); i++) {
                 apriltag_detection_t *det;
                 zarray_get(detections, i, &det);
+                // detected_ids.insert(det->id);
                 
                 // Extract the tag corners as image points
                 std::vector<cv::Point2d> imagePoints = {
@@ -121,7 +122,6 @@ private:
                 cv::Mat rvec, tvec;
                 bool success = cv::solvePnP(objectPoints, imagePoints, cameraMat, distCoeffs, 
                                            rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
-                
                 if (success) {
                     RCLCPP_INFO(this->get_logger(), "Found pose for tag ID: %d", det->id);
                     
@@ -134,8 +134,6 @@ private:
                                 det->id, rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2));
                     RCLCPP_INFO(this->get_logger(), "Tag %d translation vector: [%f, %f, %f]", 
                                 det->id, tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
-
-                    //usleep(2000000);
                     
                     // Publish the transform
                     publishTagTransform(det->id, rotMat, tvec, msg->header.stamp);
@@ -143,7 +141,6 @@ private:
                     RCLCPP_WARN(this->get_logger(), "Failed to estimate pose for tag ID: %d", det->id);
                 }
             }
-            
             apriltag_detections_destroy(detections);
         }
         catch (cv_bridge::Exception& e) {
@@ -153,7 +150,6 @@ private:
             RCLCPP_ERROR(this->get_logger(), "Exception: %s", e.what());
         }
     }
-
     void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
     {
         if (!camera_info_received_) {
@@ -194,6 +190,21 @@ private:
         // Publish the transform
         tf_broadcaster_->sendTransform(transformStamped);
     }
+    void publishTagTransform(int tag_id, const geometry_msgs::msg::Pose &pose, const rclcpp::Time &stamp)
+    {
+        geometry_msgs::msg::TransformStamped transformStamped;
+        transformStamped.header.stamp = stamp;
+        transformStamped.header.frame_id = "camera_color_frame";
+        transformStamped.child_frame_id = "tag_" + std::to_string(tag_id);
+
+        transformStamped.transform.translation.x = pose.position.x;
+        transformStamped.transform.translation.y = pose.position.y;
+        transformStamped.transform.translation.z = pose.position.z;
+        transformStamped.transform.rotation = pose.orientation;
+
+        tf_broadcaster_->sendTransform(transformStamped);
+    }
+    
     // AprilTag detector
     apriltag_family_t *tf = tagStandard41h12_create();
     apriltag_detector_t *td = apriltag_detector_create();
@@ -207,10 +218,8 @@ private:
     // ROS subscriptions and publishers
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
     rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_pub_;
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
-
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);

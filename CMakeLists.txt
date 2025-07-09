@@ -9,7 +9,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
-#find_package(apriltag REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 include_directories(${cv_bridge_INCLUDE_DIRS})
 
 
@@ -38,7 +40,9 @@ target_link_libraries(apriltag_detector
   ${rclcpp_LIBRARIES}
   ${sensor_msgs_LIBRARIES}
   ${geometry_msgs_LIBRARIES}
+  ${tf2_LIBRARIES}
   ${tf2_ros_LIBRARIES}
+  ${tf2_geometry_msgs_LIBRARIES}
   ${cv_bridge_LIBRARIES}
   ${OpenCV_LIBS}
   ${APRILTAG_LIB_DIR}/libapriltag.so
