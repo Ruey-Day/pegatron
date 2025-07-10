@@ -72,5 +72,51 @@ install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}
 )
+# Create the executable
+add_executable(apriltag_world src/apriltag_world.cpp)
+target_include_directories(apriltag_world PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${APRILTAG_INCLUDE_DIR}
+  ${cv_bridge_INCLUDE_DIRS}
+)
+target_compile_features(apriltag_world PUBLIC c_std_99 cxx_std_17)
 
+# Link against the necessary libraries
+target_link_libraries(apriltag_world
+  ${rclcpp_LIBRARIES}
+  ${sensor_msgs_LIBRARIES}
+  ${geometry_msgs_LIBRARIES}
+  ${tf2_LIBRARIES}
+  ${tf2_ros_LIBRARIES}
+  ${tf2_geometry_msgs_LIBRARIES}
+  ${cv_bridge_LIBRARIES}
+  ${OpenCV_LIBS}
+  ${APRILTAG_LIB_DIR}/libapriltag.so
+)
+
+ament_target_dependencies(apriltag_world
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  tf2_ros
+  cv_bridge
+  OpenCV
+)
+
+# Install the executable
+install(TARGETS apriltag_world
+  DESTINATION lib/${PROJECT_NAME})
+
+# Install launch files
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+# Install config files
+install(DIRECTORY
+  config
+  DESTINATION share/${PROJECT_NAME}
+)
 ament_package()
