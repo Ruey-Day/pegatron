@@ -163,32 +163,41 @@ private:
 
     void publishTagTransform(int tag_id, const cv::Mat &rotMat, const cv::Mat &tvec, const rclcpp::Time &stamp)
     {
-        geometry_msgs::msg::TransformStamped transformStamped;
-        transformStamped.header.stamp = stamp;
-        // Set the parent frame (adjust if needed)
-        transformStamped.header.frame_id = "camera_color_frame"; // <-- You may change this as needed
-        transformStamped.child_frame_id = "tag_" + std::to_string(tag_id);
-
-        // Set translation from the tvec (assuming tvec is of type CV_64F)
-        transformStamped.transform.translation.x = tvec.at<double>(0);
-        transformStamped.transform.translation.y = tvec.at<double>(1);
-        transformStamped.transform.translation.z = tvec.at<double>(2);
-
-        // Convert the OpenCV rotation matrix to a tf2::Quaternion.
+        // 1. Convert rotation matrix and translation vector into tf2::Transform
         tf2::Matrix3x3 tf3d(
             rotMat.at<double>(0, 0), rotMat.at<double>(0, 1), rotMat.at<double>(0, 2),
             rotMat.at<double>(1, 0), rotMat.at<double>(1, 1), rotMat.at<double>(1, 2),
             rotMat.at<double>(2, 0), rotMat.at<double>(2, 1), rotMat.at<double>(2, 2)
         );
-        tf2::Quaternion q;
-        tf3d.getRotation(q);
+        tf2::Vector3 translation(
+            tvec.at<double>(0),
+            tvec.at<double>(1),
+            tvec.at<double>(2)
+        );
 
+        // 2. Create original transform (tag w.r.t. camera)
+        tf2::Transform tag_wrt_cam(tf3d, translation);
+
+        // 3. Invert the transform to get camera w.r.t. tag
+        tf2::Transform cam_wrt_tag = tag_wrt_cam.inverse();
+
+        // 4. Fill the message
+        geometry_msgs::msg::TransformStamped transformStamped;
+        transformStamped.header.stamp = stamp;
+        transformStamped.header.frame_id = "tag_" + std::to_string(tag_id);  // <-- parent is tag
+        transformStamped.child_frame_id = "camera_from_tag";                 // <-- child is camera
+
+        transformStamped.transform.translation.x = cam_wrt_tag.getOrigin().x();
+        transformStamped.transform.translation.y = cam_wrt_tag.getOrigin().y();
+        transformStamped.transform.translation.z = cam_wrt_tag.getOrigin().z();
+
+        tf2::Quaternion q = cam_wrt_tag.getRotation();
         transformStamped.transform.rotation.x = q.x();
         transformStamped.transform.rotation.y = q.y();
         transformStamped.transform.rotation.z = q.z();
         transformStamped.transform.rotation.w = q.w();
 
-        // Publish the transform
+        // 5. Send the transform
         tf_broadcaster_->sendTransform(transformStamped);
     }
     // AprilTag detector
