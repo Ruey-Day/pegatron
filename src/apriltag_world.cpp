@@ -2,7 +2,6 @@
 #include <vector>
 #include <string>
 
-
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
@@ -61,7 +60,8 @@ public:
         tagStandard41h12_destroy(tf);
         apriltag_detector_destroy(td);
     }
-
+    std::unordered_map<int, tf2::Transform> tag_to_world_;
+    std::unordered_map<int, tf2::Transform> tag_to_ref_;
 private:
     void imageCallback(const sensor_msgs::msg::Image::SharedPtr msg)
     {   
@@ -69,6 +69,8 @@ private:
             RCLCPP_INFO(this->get_logger(), "Waiting for camera info...");
             return;
         }
+        std::unordered_map<int, tf2::Transform> camera_to_tag_transforms;
+        std::vector<int> detected_tags; 
         try {   
             RCLCPP_INFO(this->get_logger(), "Processing image frame");
             cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
@@ -105,11 +107,10 @@ private:
                 cv::Point3d( half_size, -half_size, 0.0),  // Top-right
                 cv::Point3d(-half_size, -half_size, 0.0)   // Top-left
             };
-
+            std::unordered_map<int, bool> detected;
             for (int i = 0; i < zarray_size(detections); i++) {
                 apriltag_detection_t *det;
                 zarray_get(detections, i, &det);
-                // detected_ids.insert(det->id);
                 
                 // Extract the tag corners as image points
                 std::vector<cv::Point2d> imagePoints = {
@@ -118,13 +119,14 @@ private:
                     cv::Point2d(det->p[2][0], det->p[2][1]),  // Top-right
                     cv::Point2d(det->p[3][0], det->p[3][1])   // Top-left
                 };
-
+                
                 // Use OpenCV's PnP solver with SOLVEPNP_IPPE_SQUARE method
                 cv::Mat rvec, tvec;
                 bool success = cv::solvePnP(objectPoints, imagePoints, cameraMat, distCoeffs, 
                                            rvec, tvec, false, cv::SOLVEPNP_IPPE_SQUARE);
                 if (success) {
                     RCLCPP_INFO(this->get_logger(), "Found pose for tag ID: %d", det->id);
+
                     
                     // Convert rotation vector to rotation matrix
                     cv::Mat rotMat;
@@ -135,11 +137,72 @@ private:
                                 det->id, rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2));
                     RCLCPP_INFO(this->get_logger(), "Tag %d translation vector: [%f, %f, %f]", 
                                 det->id, tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
+                    tf2::Matrix3x3 tf3d(
+                        rotMat.at<double>(0, 0), rotMat.at<double>(0, 1), rotMat.at<double>(0, 2),
+                        rotMat.at<double>(1, 0), rotMat.at<double>(1, 1), rotMat.at<double>(1, 2),
+                        rotMat.at<double>(2, 0), rotMat.at<double>(2, 1), rotMat.at<double>(2, 2)
+                    );
+                    tf2::Vector3 translation(
+                        tvec.at<double>(0),
+                        tvec.at<double>(1),
+                        tvec.at<double>(2)
+                    );
+                    tf2::Transform tag_to_cam(tf3d, translation);
+                    // tf2::Transform cam_to_tag = tag_to_cam.inverse();
+
+                    // // First seen tag becomes the reference
+                    if (reference_tag_id_ == -1) {
+                        reference_tag_id_ = det->id;
+                        RCLCPP_INFO(this->get_logger(), "Set reference tag ID: %d", reference_tag_id_);
+                    }
+
+                    // Get camera pose w.r.t world (using current tag's known pose)
+                    // tf2::Transform cam_to_world = tag_to_cam;
                     
+                    // Save tag-to-world transform (cam_to_world * cam_to_tag)
+                    detected[det->id] = true;
+                    tag_to_world_[det->id] = tag_to_cam;
                     // Publish the transform
                     publishTagTransform(det->id, rotMat, tvec, msg->header.stamp);
                 } else {
                     RCLCPP_WARN(this->get_logger(), "Failed to estimate pose for tag ID: %d", det->id);
+                }
+            }
+            if (reference_tag_id_ != -1 && tag_to_world_.count(reference_tag_id_) > 0) {
+                
+                // if(!detected[reference_tag_id_]){
+                //     for (const auto& [tag_id, tag_to_world] : tag_to_world_) {
+                //         if (detected[tag_id]){
+                //             tag_to_world_[reference_tag_id_]= tag_to_ref_[tag_id].inverse();
+                //         }
+                //         break;
+                //     }
+                // }
+                tf2::Transform ref_tag_to_world = tag_to_world_[reference_tag_id_];
+                for (const auto& [tag_id, tag_to_world] : tag_to_world_) {
+                    if (tag_id == reference_tag_id_) continue;
+                    if (detected[tag_id]){
+                        tf2::Transform ref_to_tag = ref_tag_to_world.inverse() * tag_to_world;
+                        tag_to_ref_[tag_id]=ref_to_tag;
+                        geometry_msgs::msg::TransformStamped transformStamped;
+                        transformStamped.header.stamp = msg->header.stamp;
+                        transformStamped.header.frame_id = "tag_" + std::to_string(reference_tag_id_);
+                        transformStamped.child_frame_id = "tag_" + std::to_string(tag_id);
+
+
+                        transformStamped.transform.translation.x = ref_to_tag.getOrigin().x();
+                        transformStamped.transform.translation.y = ref_to_tag.getOrigin().y();
+                        transformStamped.transform.translation.z = ref_to_tag.getOrigin().z();
+
+                        tf2::Quaternion q = ref_to_tag.getRotation();
+                        transformStamped.transform.rotation.x = q.x();
+                        transformStamped.transform.rotation.y = q.y();
+                        transformStamped.transform.rotation.z = q.z();
+                        transformStamped.transform.rotation.w = q.w();
+
+                        tf_broadcaster_->sendTransform(transformStamped);
+                    }
+                    
                 }
             }
             apriltag_detections_destroy(detections);
@@ -180,12 +243,12 @@ private:
 
         // 3. Invert the transform to get camera w.r.t. tag
         tf2::Transform cam_wrt_tag = tag_wrt_cam.inverse();
-
+        
         // 4. Fill the message
         geometry_msgs::msg::TransformStamped transformStamped;
         transformStamped.header.stamp = stamp;
-        transformStamped.header.frame_id = "tag_" + std::to_string(tag_id);  // <-- parent is tag
-        transformStamped.child_frame_id = "camera_from_tag";                 // <-- child is camera
+        transformStamped.header.frame_id = "tag_" + std::to_string(tag_id);             // <-- parent is tag
+        transformStamped.child_frame_id = "camera_from_tag" + std::to_string(tag_id);   // <-- child is camera
 
         transformStamped.transform.translation.x = cam_wrt_tag.getOrigin().x();
         transformStamped.transform.translation.y = cam_wrt_tag.getOrigin().y();
@@ -204,7 +267,7 @@ private:
     apriltag_family_t *tf = tagStandard41h12_create();
     apriltag_detector_t *td = apriltag_detector_create();
     double tag_size;
-
+    int reference_tag_id_ = -1;
     // Camera info
     std::array<double, 9> camera_info_K;
     std::vector<double> camera_info_D;
