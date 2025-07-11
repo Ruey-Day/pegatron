@@ -127,7 +127,6 @@ private:
                 if (success) {
                     RCLCPP_INFO(this->get_logger(), "Found pose for tag ID: %d", det->id);
 
-                    
                     // Convert rotation vector to rotation matrix
                     cv::Mat rotMat;
                     cv::Rodrigues(rvec, rotMat);
@@ -148,22 +147,18 @@ private:
                         tvec.at<double>(2)
                     );
                     tf2::Transform tag_to_cam(tf3d, translation);
-                    // tf2::Transform cam_to_tag = tag_to_cam.inverse();
 
-                    // // First seen tag becomes the reference
+                    // First seen tag becomes the reference
                     if (reference_tag_id_ == -1) {
                         reference_tag_id_ = det->id;
                         RCLCPP_INFO(this->get_logger(), "Set reference tag ID: %d", reference_tag_id_);
                     }
-
-                    // Get camera pose w.r.t world (using current tag's known pose)
-                    // tf2::Transform cam_to_world = tag_to_cam;
                     
                     // Save tag-to-world transform (cam_to_world * cam_to_tag)
                     detected[det->id] = true;
                     tag_to_world_[det->id] = tag_to_cam;
                     // Publish the transform
-                    publishTagTransform(det->id, rotMat, tvec, msg->header.stamp);
+                    publishTagTransform(det->id, tag_to_cam, msg->header.stamp);
                 } else {
                     RCLCPP_WARN(this->get_logger(), "Failed to estimate pose for tag ID: %d", det->id);
                 }
@@ -187,42 +182,7 @@ private:
                     }
                 }
             }
-            bool published_camera_from_ref = false;
-
             if (reference_tag_id_ != -1) {
-                for (const auto& [tag_id, tag_to_cam] : tag_to_world_) {
-                    if (tag_id == reference_tag_id_) continue;
-                    if (detected[tag_id] && tag_to_ref_.count(tag_id)) {
-                        // Compute camera in reference frame
-                        tf2::Transform ref_to_tag = tag_to_ref_[tag_id];
-                        tf2::Transform cam_wrt_tag = tag_to_cam.inverse();
-                        tf2::Transform cam_wrt_ref = ref_to_tag * cam_wrt_tag;
-
-                        geometry_msgs::msg::TransformStamped transformStamped;
-                        transformStamped.header.stamp = msg->header.stamp;
-                        transformStamped.header.frame_id = "tag_" + std::to_string(reference_tag_id_);
-                        transformStamped.child_frame_id = "camera_from_ref_fallback";
-
-                        transformStamped.transform.translation.x = cam_wrt_ref.getOrigin().x();
-                        transformStamped.transform.translation.y = cam_wrt_ref.getOrigin().y();
-                        transformStamped.transform.translation.z = cam_wrt_ref.getOrigin().z();
-
-                        tf2::Quaternion q = cam_wrt_ref.getRotation();
-                        transformStamped.transform.rotation.x = q.x();
-                        transformStamped.transform.rotation.y = q.y();
-                        transformStamped.transform.rotation.z = q.z();
-                        transformStamped.transform.rotation.w = q.w();
-
-                        tf_broadcaster_->sendTransform(transformStamped);
-                        published_camera_from_ref = true;
-                        break;
-                    }
-                }
-            }
-
-            if (reference_tag_id_ != -1 && tag_to_world_.count(reference_tag_id_) > 0) {
-                
-                
                 tf2::Transform ref_tag_to_world = tag_to_world_[reference_tag_id_];
                 for (const auto& [tag_id, tag_to_world] : tag_to_world_) {
                     if (tag_id == reference_tag_id_) continue;
@@ -268,24 +228,8 @@ private:
             RCLCPP_INFO(this->get_logger(), "Camera info received");
         }
     }
-
-    void publishTagTransform(int tag_id, const cv::Mat &rotMat, const cv::Mat &tvec, const rclcpp::Time &stamp)
+    void publishTagTransform(int tag_id, tf2::Transform tag_wrt_cam, const rclcpp::Time &stamp)
     {
-        // 1. Convert rotation matrix and translation vector into tf2::Transform
-        tf2::Matrix3x3 tf3d(
-            rotMat.at<double>(0, 0), rotMat.at<double>(0, 1), rotMat.at<double>(0, 2),
-            rotMat.at<double>(1, 0), rotMat.at<double>(1, 1), rotMat.at<double>(1, 2),
-            rotMat.at<double>(2, 0), rotMat.at<double>(2, 1), rotMat.at<double>(2, 2)
-        );
-        tf2::Vector3 translation(
-            tvec.at<double>(0),
-            tvec.at<double>(1),
-            tvec.at<double>(2)
-        );
-
-        // 2. Create original transform (tag w.r.t. camera)
-        tf2::Transform tag_wrt_cam(tf3d, translation);
-
         // 3. Invert the transform to get camera w.r.t. tag
         tf2::Transform cam_wrt_tag = tag_wrt_cam.inverse();
         
