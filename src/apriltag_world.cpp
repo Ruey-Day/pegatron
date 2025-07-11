@@ -168,16 +168,61 @@ private:
                     RCLCPP_WARN(this->get_logger(), "Failed to estimate pose for tag ID: %d", det->id);
                 }
             }
+            // If the reference tag is not seen, try to update its pose using another tag
+            if (reference_tag_id_ != -1 && !detected[reference_tag_id_]) {
+                for (const auto& [tag_id, visible_tag_pose] : tag_to_world_) {
+                    // Only use visible tags with known ref transform
+                    if (detected[tag_id] && tag_to_ref_.count(tag_id)) {
+                        tf2::Transform tag_to_ref = tag_to_ref_[tag_id];
+                        tf2::Transform tag_to_world = visible_tag_pose;
+
+                        // ref = tag * tag_to_ref⁻¹
+                        tf2::Transform ref_to_world = tag_to_world * tag_to_ref.inverse();
+                        tag_to_world_[reference_tag_id_] = ref_to_world;
+
+                        RCLCPP_WARN(this->get_logger(), 
+                            "Reference tag %d not seen, using tag %d to update pose.",
+                            reference_tag_id_, tag_id);
+                        break;
+                    }
+                }
+            }
+            bool published_camera_from_ref = false;
+
+            if (reference_tag_id_ != -1) {
+                for (const auto& [tag_id, tag_to_cam] : tag_to_world_) {
+                    if (tag_id == reference_tag_id_) continue;
+                    if (detected[tag_id] && tag_to_ref_.count(tag_id)) {
+                        // Compute camera in reference frame
+                        tf2::Transform ref_to_tag = tag_to_ref_[tag_id];
+                        tf2::Transform cam_wrt_tag = tag_to_cam.inverse();
+                        tf2::Transform cam_wrt_ref = ref_to_tag * cam_wrt_tag;
+
+                        geometry_msgs::msg::TransformStamped transformStamped;
+                        transformStamped.header.stamp = msg->header.stamp;
+                        transformStamped.header.frame_id = "tag_" + std::to_string(reference_tag_id_);
+                        transformStamped.child_frame_id = "camera_from_ref_fallback";
+
+                        transformStamped.transform.translation.x = cam_wrt_ref.getOrigin().x();
+                        transformStamped.transform.translation.y = cam_wrt_ref.getOrigin().y();
+                        transformStamped.transform.translation.z = cam_wrt_ref.getOrigin().z();
+
+                        tf2::Quaternion q = cam_wrt_ref.getRotation();
+                        transformStamped.transform.rotation.x = q.x();
+                        transformStamped.transform.rotation.y = q.y();
+                        transformStamped.transform.rotation.z = q.z();
+                        transformStamped.transform.rotation.w = q.w();
+
+                        tf_broadcaster_->sendTransform(transformStamped);
+                        published_camera_from_ref = true;
+                        break;
+                    }
+                }
+            }
+
             if (reference_tag_id_ != -1 && tag_to_world_.count(reference_tag_id_) > 0) {
                 
-                // if(!detected[reference_tag_id_]){
-                //     for (const auto& [tag_id, tag_to_world] : tag_to_world_) {
-                //         if (detected[tag_id]){
-                //             tag_to_world_[reference_tag_id_]= tag_to_ref_[tag_id].inverse();
-                //         }
-                //         break;
-                //     }
-                // }
+                
                 tf2::Transform ref_tag_to_world = tag_to_world_[reference_tag_id_];
                 for (const auto& [tag_id, tag_to_world] : tag_to_world_) {
                     if (tag_id == reference_tag_id_) continue;
