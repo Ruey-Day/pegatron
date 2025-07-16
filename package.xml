@@ -4,7 +4,7 @@
   <name>apriltag_detector</name>
   <version>0.1.0</version>
   <description>ROS2 node for AprilTag detection and pose estimation</description>
-  <maintainer email="your.email@example.com">Your Name</maintainer>
+  <maintainer email="rueyday@umich.edu">Ruey Day</maintainer>
   <license>Apache License 2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

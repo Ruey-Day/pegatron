@@ -26,17 +26,17 @@ if(NOT EXISTS "${APRILTAG_LIB_DIR}/libapriltag.so")
 endif()
 
 # Create the executable
-add_executable(apriltag_detector src/apriltag_detector.cpp)
-target_include_directories(apriltag_detector PUBLIC
+add_executable(detector src/detector.cpp)
+target_include_directories(detector PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${APRILTAG_INCLUDE_DIR}
   ${cv_bridge_INCLUDE_DIRS}
 )
-target_compile_features(apriltag_detector PUBLIC c_std_99 cxx_std_17)
+target_compile_features(detector PUBLIC c_std_99 cxx_std_17)
 
 # Link against the necessary libraries
-target_link_libraries(apriltag_detector
+target_link_libraries(detector
   ${rclcpp_LIBRARIES}
   ${sensor_msgs_LIBRARIES}
   ${geometry_msgs_LIBRARIES}
@@ -48,7 +48,7 @@ target_link_libraries(apriltag_detector
   ${APRILTAG_LIB_DIR}/libapriltag.so
 )
 
-ament_target_dependencies(apriltag_detector
+ament_target_dependencies(detector
   rclcpp
   sensor_msgs
   geometry_msgs
@@ -58,7 +58,7 @@ ament_target_dependencies(apriltag_detector
 )
 
 # Install the executable
-install(TARGETS apriltag_detector
+install(TARGETS detector
   DESTINATION lib/${PROJECT_NAME})
 
 # Install launch files
@@ -73,17 +73,17 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 # Create the executable
-add_executable(apriltag_world src/apriltag_world.cpp)
-target_include_directories(apriltag_world PUBLIC
+add_executable(world src/world.cpp)
+target_include_directories(world PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${APRILTAG_INCLUDE_DIR}
   ${cv_bridge_INCLUDE_DIRS}
 )
-target_compile_features(apriltag_world PUBLIC c_std_99 cxx_std_17)
+target_compile_features(world PUBLIC c_std_99 cxx_std_17)
 
 # Link against the necessary libraries
-target_link_libraries(apriltag_world
+target_link_libraries(world
   ${rclcpp_LIBRARIES}
   ${sensor_msgs_LIBRARIES}
   ${geometry_msgs_LIBRARIES}
@@ -95,7 +95,7 @@ target_link_libraries(apriltag_world
   ${APRILTAG_LIB_DIR}/libapriltag.so
 )
 
-ament_target_dependencies(apriltag_world
+ament_target_dependencies(world
   rclcpp
   sensor_msgs
   geometry_msgs
@@ -105,7 +105,7 @@ ament_target_dependencies(apriltag_world
 )
 
 # Install the executable
-install(TARGETS apriltag_world
+install(TARGETS world
   DESTINATION lib/${PROJECT_NAME})
 
 # Install launch files
